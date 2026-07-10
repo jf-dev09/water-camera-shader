@@ -180,6 +180,7 @@
       const liquidBtn = document.getElementById("liquidMode");
       const crystalBtn = document.getElementById("crystalMode");
       const switchBtn = document.getElementById("switchCamera");
+      const debugMode = new URLSearchParams(window.location.search).has("debug");
 
       const TIP_INDICES = [4, 8, 12, 16, 20];
       const MAX_TOUCHES = 10;
@@ -572,10 +573,10 @@ void main() {
         const forces = [];
         const radii = [];
         const now = performance.now();
-        const fade = Math.min(1, Math.max(0, (now - lastHandsAt) / 260));
+        const fade = Math.min(1, Math.max(0, (now - lastHandsAt) / 700));
 
         for (const t of touches) {
-          t.force *= 0.88;
+          t.force *= 0.94;
           touchA.push(t.a[0], t.a[1]);
           touchB.push(t.b[0], t.b[1]);
           forces.push(t.force * (1 - fade));
@@ -667,8 +668,10 @@ void main() {
           for (let tipIndex = 0; tipIndex < TIP_INDICES.length; tipIndex++) {
             const lm = landmarks[TIP_INDICES[tipIndex]];
             const touch = touches[slot];
-            const x = mirror > 0.5 ? 1 - lm.x : lm.x;
-            const y = 1 - lm.y;
+            const videoX = mirror > 0.5 ? 1 - lm.x : lm.x;
+            const videoY = 1 - lm.y;
+            const x = Math.max(-0.25, Math.min(1.25, (videoX - videoOffset[0]) / Math.max(videoScale[0], 0.0001)));
+            const y = Math.max(-0.25, Math.min(1.25, (videoY - videoOffset[1]) / Math.max(videoScale[1], 0.0001)));
             const prevX = touch.b[0];
             const prevY = touch.b[1];
             const dx = (x - prevX) * viewAspect;
@@ -680,8 +683,8 @@ void main() {
             touch.a[1] = touch.fresh ? prevY : y;
             touch.b[0] = x;
             touch.b[1] = y;
-            touch.force = Math.max(touch.force, 0.018 + speed * 0.095 + proximity * 0.13);
-            touch.radius = 0.018 + proximity * 0.042 + speed * 0.014;
+            touch.force = Math.max(touch.force, 0.065 + speed * 0.18 + proximity * 0.21);
+            touch.radius = 0.034 + proximity * 0.07 + speed * 0.02;
             touch.fresh = 1;
             slot++;
             any = true;
@@ -695,6 +698,11 @@ void main() {
 
         if (any) {
           lastHandsAt = performance.now();
+          if (debugMode) {
+            setStatus(`hands ${landmarkSets.length} / tips ${slot}`);
+          }
+        } else if (debugMode) {
+          setStatus("hands 0");
         }
       }
 
