@@ -183,6 +183,9 @@
       const debugMode = new URLSearchParams(window.location.search).has("debug");
 
       const TIP_INDICES = [4, 8, 12, 16, 20];
+      const DETAIL_TIP_INDICES = [0, 1, 2, 4];
+      const PALM_INDICES = [0, 5, 9, 13, 17];
+      const DETAIL_WEIGHTS = [0.62, 1.0, 0.72, 0.48];
       const MAX_TOUCHES = 10;
       const touches = Array.from({ length: MAX_TOUCHES }, () => ({
         a: [0.5, 0.5],
@@ -281,13 +284,14 @@ void main() {
   float impulse = 0.0;
   for (int i = 0; i < 10; i++) {
     float sdf = capsuleSDF(vUv, uTouchA[i], uTouchB[i], uTouchRadius[i]);
-    float width = max(uTouchRadius[i] * 0.52, 0.004);
-    float q = sdf / width;
-    float ringWave = (1.0 - 2.0 * q * q) * exp(-q * q);
-    impulse += uTouchForce[i] * ringWave;
+    float centerDistance = sdf + uTouchRadius[i];
+    float width = max(uTouchRadius[i] * 0.75, 0.004);
+    float q = centerDistance / width;
+    float pressureWave = exp(-q * q * 1.4) - exp(-q * q * 0.32) * 0.24;
+    impulse += uTouchForce[i] * pressureWave;
   }
 
-  next += clamp(impulse, -0.075, 0.075) * mix(0.165, 0.205, crystal);
+  next += clamp(impulse, -0.060, 0.060) * mix(0.145, 0.180, crystal);
   float velocity = next - h;
   float amp = abs(next) * 0.55 + abs(velocity);
   float inertia = smoothstep(0.012, 0.19, amp);
@@ -345,26 +349,33 @@ void main() {
   float ul = waveHeight(texture2D(uWave, vUv + vec2(-uTexel.x,  uTexel.y)));
   float ur = waveHeight(texture2D(uWave, vUv + vec2( uTexel.x,  uTexel.y)));
 
-  vec2 grad = vec2(r - l, u - d);
+  vec2 grad = vec2(
+    (4.0 * (r - l) + dr + ur - dl - ul) / 6.0,
+    (4.0 * (u - d) + ul + ur - dl - dr) / 6.0
+  );
   float lap = (4.0 * (l + r + d + u) + (dl + dr + ul + ur) - 20.0 * h) / 6.0;
   float crystal = step(0.5, uMode);
   float slope = length(grad * vec2(uAspect, 1.0));
-  float activity = smoothstep(0.0008, 0.018, slope + abs(lap) * 0.72);
-  float lens = 1.0 + abs(lap) * mix(4.0, 6.0, crystal);
+  float activity = smoothstep(0.0007, 0.014, slope + abs(lap) * 0.68);
+  float lens = 1.0 + abs(lap) * mix(3.4, 4.8, crystal);
 
-  vec2 refractOffset = grad * mix(0.22, 0.30, crystal) * lens;
-  refractOffset += grad * (-lap) * mix(0.30, 0.42, crystal);
+  vec2 refractOffset = grad * mix(0.24, 0.32, crystal) * lens;
+  refractOffset += grad * (-lap) * mix(0.24, 0.34, crystal);
   refractOffset.x /= max(uAspect, 0.001);
-  float maxOffset = mix(0.009, 0.014, crystal);
+  float maxOffset = mix(0.010, 0.014, crystal);
   vec2 offsetLimit = vec2(maxOffset / max(uAspect, 0.001), maxOffset);
-  refractOffset = clamp(refractOffset, -offsetLimit, offsetLimit);
+  vec2 normalizedOffset = refractOffset / offsetLimit;
+  refractOffset /= sqrt(vec2(1.0) + normalizedOffset * normalizedOffset);
 
   vec3 base = cameraSample(vUv);
   vec3 redSample = cameraSample(vUv + refractOffset * mix(0.985, 0.975, crystal));
   vec3 greenSample = cameraSample(vUv + refractOffset);
   vec3 blueSample = cameraSample(vUv + refractOffset * mix(1.015, 1.025, crystal));
   vec3 refracted = vec3(redSample.r, greenSample.g, blueSample.b);
-  vec3 color = mix(base, refracted, activity * mix(0.88, 1.0, crystal));
+  vec3 color = mix(base, refracted, activity * mix(0.82, 0.94, crystal));
+  float contour = smoothstep(0.003, 0.024, abs(lap) + slope * 0.50) * activity;
+  vec3 lensSample = cameraSample(vUv + refractOffset * 1.35);
+  color = mix(color, lensSample, contour * mix(0.16, 0.23, crystal));
 
   gl_FragColor = vec4(color, 1.0);
 }
@@ -698,8 +709,8 @@ void main() {
           touch.b[0] = point[0];
           touch.b[1] = point[1];
           const motion = Math.min(c.score / 120, 1);
-          touch.force = Math.max(touch.force, 0.008 + motion * 0.030);
-          touch.radius = 0.030 + motion * 0.016;
+          touch.force = Math.max(touch.force, 0.006 + motion * 0.020);
+          touch.radius = 0.022 + motion * 0.014;
           touch.fresh = 1;
         }
 
@@ -751,53 +762,101 @@ void main() {
         requestAnimationFrame(frame);
       }
 
+      function pointDistance(a, b, aspect) {
+        const dx = (a[0] - b[0]) * aspect;
+        const dy = a[1] - b[1];
+        return Math.sqrt(dx * dx + dy * dy);
+      }
+
+      function trackTouch(touch, point, proximity, aspect, jumpLimit, speedScale) {
+        const previous = [touch.b[0], touch.b[1]];
+        const distance = pointDistance(point, previous, aspect);
+        const tracked = touch.fresh && distance < jumpLimit;
+        const speed = tracked ? Math.min(1, distance * speedScale) : 0;
+        const depthSpeed = tracked ? Math.min(1, Math.abs(proximity - touch.depth) * 6) : 0;
+        const movement = Math.max(speed, depthSpeed);
+        const rawActive = Math.max(0, Math.min(1, (movement - 0.015) / 0.18));
+        const active = rawActive * rawActive * (3 - 2 * rawActive);
+
+        touch.a[0] = tracked ? previous[0] : point[0];
+        touch.a[1] = tracked ? previous[1] : point[1];
+        touch.b[0] = point[0];
+        touch.b[1] = point[1];
+        touch.depth = proximity;
+        touch.fresh = 1;
+        return { movement, active };
+      }
+
       function processHands(results) {
         const viewAspect = Math.max(canvas.width / Math.max(canvas.height, 1), 0.0001);
-        let slot = 0;
+        const landmarkSets = (results.multiHandLandmarks || []).slice(0, 2);
         let any = false;
-        const landmarkSets = results.multiHandLandmarks || [];
 
-        for (let handIndex = 0; handIndex < landmarkSets.length && handIndex < 2; handIndex++) {
+        for (let handIndex = 0; handIndex < landmarkSets.length; handIndex++) {
           const landmarks = landmarkSets[handIndex];
-          for (let tipIndex = 0; tipIndex < TIP_INDICES.length; tipIndex++) {
-            const lm = landmarks[TIP_INDICES[tipIndex]];
-            const touch = touches[slot];
-            const point = videoPointToScreen(lm.x, lm.y);
-            const x = point[0];
-            const y = point[1];
-            const prevX = touch.b[0];
-            const prevY = touch.b[1];
-            const dx = (x - prevX) * viewAspect;
-            const dy = y - prevY;
-            const speed = Math.min(1, Math.sqrt(dx * dx + dy * dy) * 10);
-            const proximity = Math.max(0, Math.min(1, (-lm.z - 0.015) / 0.14));
-            const depthSpeed = touch.fresh ? Math.min(1, Math.abs(proximity - touch.depth) * 7) : 0;
-            const movement = Math.max(speed, depthSpeed);
-            const active = Math.max(0, Math.min(1, (movement - 0.018) / 0.16));
+          const slotBase = handIndex * 5;
+          const tipPoints = TIP_INDICES.map((index) => {
+            const landmark = landmarks[index];
+            return videoPointToScreen(landmark.x, landmark.y);
+          });
+          const palmPoints = PALM_INDICES.map((index) => {
+            const landmark = landmarks[index];
+            return videoPointToScreen(landmark.x, landmark.y);
+          });
+          const palmCenter = palmPoints.reduce((center, point) => [
+            center[0] + point[0] / palmPoints.length,
+            center[1] + point[1] / palmPoints.length
+          ], [0, 0]);
+          const proximity = TIP_INDICES.reduce((sum, index) => {
+            return sum + Math.max(0, Math.min(1, (-landmarks[index].z - 0.015) / 0.14)) / TIP_INDICES.length;
+          }, 0);
 
-            touch.a[0] = touch.fresh ? prevX : x;
-            touch.a[1] = touch.fresh ? prevY : y;
-            touch.b[0] = x;
-            touch.b[1] = y;
-            touch.force = Math.max(touch.force, active * (0.008 + movement * 0.036 + proximity * 0.007));
-            touch.radius = 0.032 + proximity * 0.018 + movement * 0.008;
-            touch.depth = proximity;
-            touch.fresh = 1;
-            slot++;
-            any = true;
+          const palmTouch = touches[slotBase];
+          const palmMotion = trackTouch(palmTouch, palmCenter, proximity, viewAspect, 0.22, 8);
+          const palmWidth = pointDistance(palmPoints[1], palmPoints[4], viewAspect);
+          const palmLength = pointDistance(palmPoints[0], palmPoints[2], viewAspect);
+          palmTouch.radius = Math.max(0.036, Math.min(0.085, 0.024 + palmWidth * 0.28 + palmLength * 0.12));
+          palmTouch.force = Math.max(
+            palmTouch.force,
+            palmMotion.active * (0.006 + palmMotion.movement * 0.026 + proximity * 0.003)
+          );
+
+          for (let detailIndex = 0; detailIndex < DETAIL_TIP_INDICES.length; detailIndex++) {
+            const tipPosition = DETAIL_TIP_INDICES[detailIndex];
+            const landmark = landmarks[TIP_INDICES[tipPosition]];
+            const tipProximity = Math.max(0, Math.min(1, (-landmark.z - 0.015) / 0.14));
+            const detailTouch = touches[slotBase + detailIndex + 1];
+            const detailMotion = trackTouch(
+              detailTouch,
+              tipPoints[tipPosition],
+              tipProximity,
+              viewAspect,
+              0.16,
+              10
+            );
+            detailTouch.radius = 0.014 + tipProximity * 0.008 + detailMotion.movement * 0.003;
+            detailTouch.force = Math.max(
+              detailTouch.force,
+              detailMotion.active *
+                (0.0025 + detailMotion.movement * 0.012 + tipProximity * 0.002) *
+                DETAIL_WEIGHTS[detailIndex]
+            );
           }
+
+          any = true;
         }
 
-        for (; slot < MAX_TOUCHES; slot++) {
+        const usedSlots = landmarkSets.length * 5;
+        for (let slot = usedSlots; slot < MAX_TOUCHES; slot++) {
           touches[slot].fresh = 0;
-          touches[slot].force *= 0.46;
+          touches[slot].force *= 0.42;
         }
 
         if (any) {
           lastHandsAt = performance.now();
           lastInputAt = lastHandsAt;
           if (debugMode) {
-            setStatus(`hands ${landmarkSets.length} / tips ${slot}`);
+            setStatus(`hands ${landmarkSets.length} / tips ${landmarkSets.length * TIP_INDICES.length}`);
           }
         } else if (debugMode) {
           setStatus("hands 0");
