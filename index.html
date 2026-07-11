@@ -189,6 +189,7 @@
         b: [0.5, 0.5],
         force: 0,
         radius: 0.018,
+        depth: 0,
         fresh: 0
       }));
 
@@ -280,19 +281,21 @@ void main() {
   float impulse = 0.0;
   for (int i = 0; i < 10; i++) {
     float sdf = capsuleSDF(vUv, uTouchA[i], uTouchB[i], uTouchRadius[i]);
-    float body = 1.0 - smoothstep(0.0, uTouchRadius[i] * 2.65, sdf);
-    float rim = smoothstep(uTouchRadius[i] * 1.9, 0.0, abs(sdf));
-    impulse += uTouchForce[i] * (body * 0.82 + rim * 0.28);
+    float width = max(uTouchRadius[i] * 0.52, 0.004);
+    float q = sdf / width;
+    float ringWave = (1.0 - 2.0 * q * q) * exp(-q * q);
+    impulse += uTouchForce[i] * ringWave;
   }
 
-  next += impulse * mix(0.24, 0.30, crystal);
+  next += clamp(impulse, -0.055, 0.055) * mix(0.115, 0.145, crystal);
   float velocity = next - h;
   float amp = abs(next) * 0.55 + abs(velocity);
   float inertia = smoothstep(0.012, 0.19, amp);
-  float keep = mix(0.944, 0.994, inertia);
+  float keep = mix(0.938, 0.989, inertia);
   keep = mix(keep, keep * 0.982, crystal);
   next = h + velocity * keep;
-  next *= mix(0.986, 0.999, inertia);
+  next *= mix(0.982, 0.996, inertia);
+  next = clamp(next, -0.22, 0.22);
 
   vec2 encoded = mix(vec2(next, h), clamp(vec2(next, h) * 0.5 + 0.5, 0.0, 1.0), uPacked);
   float encodedVelocity = mix(velocity, clamp(velocity * 0.5 + 0.5, 0.0, 1.0), uPacked);
@@ -346,38 +349,19 @@ void main() {
   float lap = (4.0 * (l + r + d + u) + (dl + dr + ul + ur) - 20.0 * h) / 6.0;
   float crystal = step(0.5, uMode);
   float slope = length(grad * vec2(uAspect, 1.0));
-  float glass = smoothstep(0.006, 0.072, slope + abs(lap) * 0.58 + abs(h) * 0.12);
-  float ridge = smoothstep(0.014, 0.082, abs(lap) + slope * 0.74);
-  float rim = smoothstep(0.13, 0.026, abs(abs(h) - 0.045)) * glass;
-  float lens = 1.0 + ridge * mix(0.62, 0.84, crystal) + rim * 0.28;
+  float activity = smoothstep(0.0015, 0.032, slope + abs(lap) * 0.72);
+  float lens = 1.0 + abs(lap) * mix(4.0, 6.0, crystal);
 
-  vec2 refractOffset = grad * mix(0.024, 0.032, crystal) * lens;
-  refractOffset += normalize(grad + vec2(0.00001)) * ridge * mix(0.002, 0.003, crystal);
-  refractOffset += grad * (-lap) * mix(0.12, 0.18, crystal);
+  vec2 refractOffset = grad * mix(0.14, 0.20, crystal) * lens;
+  refractOffset += grad * (-lap) * mix(0.22, 0.32, crystal);
   refractOffset.x /= max(uAspect, 0.001);
 
   vec3 base = cameraSample(vUv);
-  vec3 refracted = cameraSample(vUv + refractOffset);
-  vec3 stretched = cameraSample(vUv + refractOffset * 1.42 + vec2(lap * 0.008, -lap * 0.005));
-  vec3 color = mix(base, refracted, 0.18 + glass * 0.42);
-  color = mix(color, stretched, ridge * 0.18);
-
-  vec3 normal = normalize(vec3(-grad.x * 34.0 * uAspect, -grad.y * 34.0, 1.0));
-  vec3 lightA = normalize(vec3(-0.45, 0.58, 0.68));
-  vec3 lightB = normalize(vec3(0.55, -0.20, 0.80));
-  float sharpA = pow(max(dot(normal, lightA), 0.0), 58.0);
-  float sharpB = pow(max(dot(normal, lightB), 0.0), 110.0);
-  float streak = smoothstep(0.024, 0.11, slope + abs(lap) * 0.82);
-  float whiteEdge = clamp((ridge * 0.34 + rim * 0.26 + sharpA * 0.22 + sharpB * 0.14) * glass, 0.0, 1.0);
-  float thread = pow(clamp(sin((vUv.y + h * 0.55 + grad.x * 1.1) * 88.0) * 0.5 + 0.5, 0.0, 1.0), 12.0) * streak * 0.045;
-
-  vec3 waterTint = mix(vec3(0.40, 0.62, 0.66), vec3(0.64, 0.82, 0.86), ridge);
-  color = mix(color, waterTint, glass * mix(0.035, 0.055, crystal));
-  color += vec3(0.82, 0.96, 1.0) * whiteEdge * mix(0.16, 0.22, crystal);
-  color += vec3(0.70, 0.90, 0.96) * max(h, 0.0) * glass * 0.08;
-  color += vec3(0.70, 0.92, 1.0) * thread;
-  color -= vec3(0.04, 0.08, 0.10) * smoothstep(0.02, 0.16, -h) * glass * 0.09;
-  color = pow(max(color, 0.0), vec3(1.0));
+  vec3 redSample = cameraSample(vUv + refractOffset * mix(0.985, 0.975, crystal));
+  vec3 greenSample = cameraSample(vUv + refractOffset);
+  vec3 blueSample = cameraSample(vUv + refractOffset * mix(1.015, 1.025, crystal));
+  vec3 refracted = vec3(redSample.r, greenSample.g, blueSample.b);
+  vec3 color = mix(base, refracted, activity * mix(0.88, 1.0, crystal));
 
   gl_FragColor = vec4(color, 1.0);
 }
@@ -595,7 +579,7 @@ void main() {
         const fade = Math.min(1, Math.max(0, (now - lastInputAt) / 700));
 
         for (const t of touches) {
-          t.force *= 0.94;
+          t.force *= 0.70;
           touchA.push(t.a[0], t.a[1]);
           touchB.push(t.b[0], t.b[1]);
           forces.push(t.force * (1 - fade));
@@ -710,8 +694,9 @@ void main() {
           touch.a[1] = close ? prevY : point[1];
           touch.b[0] = point[0];
           touch.b[1] = point[1];
-          touch.force = Math.max(touch.force, 0.018 + Math.min(c.score / 130, 1) * 0.05);
-          touch.radius = 0.046 + Math.min(c.score / 160, 1) * 0.036;
+          const motion = Math.min(c.score / 120, 1);
+          touch.force = Math.max(touch.force, 0.005 + motion * 0.018);
+          touch.radius = 0.024 + motion * 0.012;
           touch.fresh = 1;
         }
 
@@ -783,13 +768,17 @@ void main() {
             const dy = y - prevY;
             const speed = Math.min(1, Math.sqrt(dx * dx + dy * dy) * 10);
             const proximity = Math.max(0, Math.min(1, (-lm.z - 0.015) / 0.14));
+            const depthSpeed = touch.fresh ? Math.min(1, Math.abs(proximity - touch.depth) * 7) : 0;
+            const movement = Math.max(speed, depthSpeed);
+            const active = Math.max(0, Math.min(1, (movement - 0.018) / 0.16));
 
             touch.a[0] = touch.fresh ? prevX : x;
             touch.a[1] = touch.fresh ? prevY : y;
             touch.b[0] = x;
             touch.b[1] = y;
-            touch.force = Math.max(touch.force, 0.018 + speed * 0.048 + proximity * 0.04);
-            touch.radius = 0.046 + proximity * 0.038 + speed * 0.01;
+            touch.force = Math.max(touch.force, active * (0.004 + movement * 0.022 + proximity * 0.004));
+            touch.radius = 0.024 + proximity * 0.014 + movement * 0.005;
+            touch.depth = proximity;
             touch.fresh = 1;
             slot++;
             any = true;
@@ -798,7 +787,7 @@ void main() {
 
         for (; slot < MAX_TOUCHES; slot++) {
           touches[slot].fresh = 0;
-          touches[slot].force *= 0.72;
+          touches[slot].force *= 0.46;
         }
 
         if (any) {
