@@ -287,14 +287,14 @@ void main() {
     impulse += uTouchForce[i] * ringWave;
   }
 
-  next += clamp(impulse, -0.055, 0.055) * mix(0.115, 0.145, crystal);
+  next += clamp(impulse, -0.075, 0.075) * mix(0.165, 0.205, crystal);
   float velocity = next - h;
   float amp = abs(next) * 0.55 + abs(velocity);
   float inertia = smoothstep(0.012, 0.19, amp);
-  float keep = mix(0.938, 0.989, inertia);
+  float keep = mix(0.952, 0.991, inertia);
   keep = mix(keep, keep * 0.982, crystal);
   next = h + velocity * keep;
-  next *= mix(0.982, 0.996, inertia);
+  next *= mix(0.987, 0.997, inertia);
   next = clamp(next, -0.22, 0.22);
 
   vec2 encoded = mix(vec2(next, h), clamp(vec2(next, h) * 0.5 + 0.5, 0.0, 1.0), uPacked);
@@ -349,12 +349,15 @@ void main() {
   float lap = (4.0 * (l + r + d + u) + (dl + dr + ul + ur) - 20.0 * h) / 6.0;
   float crystal = step(0.5, uMode);
   float slope = length(grad * vec2(uAspect, 1.0));
-  float activity = smoothstep(0.0015, 0.032, slope + abs(lap) * 0.72);
+  float activity = smoothstep(0.0008, 0.018, slope + abs(lap) * 0.72);
   float lens = 1.0 + abs(lap) * mix(4.0, 6.0, crystal);
 
-  vec2 refractOffset = grad * mix(0.14, 0.20, crystal) * lens;
-  refractOffset += grad * (-lap) * mix(0.22, 0.32, crystal);
+  vec2 refractOffset = grad * mix(0.22, 0.30, crystal) * lens;
+  refractOffset += grad * (-lap) * mix(0.30, 0.42, crystal);
   refractOffset.x /= max(uAspect, 0.001);
+  float maxOffset = mix(0.009, 0.014, crystal);
+  vec2 offsetLimit = vec2(maxOffset / max(uAspect, 0.001), maxOffset);
+  refractOffset = clamp(refractOffset, -offsetLimit, offsetLimit);
 
   vec3 base = cameraSample(vUv);
   vec3 redSample = cameraSample(vUv + refractOffset * mix(0.985, 0.975, crystal));
@@ -579,7 +582,7 @@ void main() {
         const fade = Math.min(1, Math.max(0, (now - lastInputAt) / 700));
 
         for (const t of touches) {
-          t.force *= 0.70;
+          t.force *= 0.84;
           touchA.push(t.a[0], t.a[1]);
           touchB.push(t.b[0], t.b[1]);
           forces.push(t.force * (1 - fade));
@@ -695,8 +698,8 @@ void main() {
           touch.b[0] = point[0];
           touch.b[1] = point[1];
           const motion = Math.min(c.score / 120, 1);
-          touch.force = Math.max(touch.force, 0.005 + motion * 0.018);
-          touch.radius = 0.024 + motion * 0.012;
+          touch.force = Math.max(touch.force, 0.008 + motion * 0.030);
+          touch.radius = 0.030 + motion * 0.016;
           touch.fresh = 1;
         }
 
@@ -776,8 +779,8 @@ void main() {
             touch.a[1] = touch.fresh ? prevY : y;
             touch.b[0] = x;
             touch.b[1] = y;
-            touch.force = Math.max(touch.force, active * (0.004 + movement * 0.022 + proximity * 0.004));
-            touch.radius = 0.024 + proximity * 0.014 + movement * 0.005;
+            touch.force = Math.max(touch.force, active * (0.008 + movement * 0.036 + proximity * 0.007));
+            touch.radius = 0.032 + proximity * 0.018 + movement * 0.008;
             touch.depth = proximity;
             touch.fresh = 1;
             slot++;
